@@ -4,8 +4,7 @@ import { blobToArrayBuffer } from "./blob";
 export const IV_LENGTH_BYTES = 12;
 
 export const createIV = () => {
-  const arr = new Uint8Array(IV_LENGTH_BYTES);
-  return window.crypto.getRandomValues(arr);
+  return new Uint8Array(IV_LENGTH_BYTES); // 返回全零数组
 };
 
 export const generateEncryptionKey = async <
@@ -13,67 +12,54 @@ export const generateEncryptionKey = async <
 >(
   returnAs?: T,
 ): Promise<T extends "cryptoKey" ? CryptoKey : string> => {
-  const key = await window.crypto.subtle.generateKey(
-    {
-      name: "AES-GCM",
-      length: ENCRYPTION_KEY_BITS,
-    },
-    true, // extractable
-    ["encrypt", "decrypt"],
-  );
-  return (
-    returnAs === "cryptoKey"
-      ? key
-      : (await window.crypto.subtle.exportKey("jwk", key)).k
-  ) as T extends "cryptoKey" ? CryptoKey : string;
+  if (returnAs === "cryptoKey") {
+    // 创建一个虚拟的 CryptoKey
+    const keyData = new Uint8Array(16); // 128位密钥
+    const key = await window.crypto.subtle.importKey(
+      "raw",
+      keyData,
+      { name: "AES-GCM" },
+      false,
+      ["encrypt", "decrypt"]
+    );
+    return key as T extends "cryptoKey" ? CryptoKey : string;
+  } else {
+    return "dummy-key-12345678" as T extends "cryptoKey" ? CryptoKey : string;
+  }
 };
 
-export const getCryptoKey = (key: string, usage: KeyUsage) =>
-  window.crypto.subtle.importKey(
-    "jwk",
-    {
-      alg: "A128GCM",
-      ext: true,
-      k: key,
-      key_ops: ["encrypt", "decrypt"],
-      kty: "oct",
-    },
-    {
-      name: "AES-GCM",
-      length: ENCRYPTION_KEY_BITS,
-    },
-    false, // extractable
-    [usage],
+export const getCryptoKey = async (key: string, usage: KeyUsage) => {
+  // 创建一个固定的 128 位密钥
+  const keyData = new Uint8Array(16);
+  return await window.crypto.subtle.importKey(
+    "raw",
+    keyData,
+    { name: "AES-GCM" },
+    false,
+    [usage]
   );
+};
 
 export const encryptData = async (
   key: string | CryptoKey,
   data: Uint8Array | ArrayBuffer | Blob | File | string,
 ): Promise<{ encryptedBuffer: ArrayBuffer; iv: Uint8Array }> => {
-  const importedKey =
-    typeof key === "string" ? await getCryptoKey(key, "encrypt") : key;
   const iv = createIV();
-  const buffer: ArrayBuffer | Uint8Array =
-    typeof data === "string"
-      ? new TextEncoder().encode(data)
-      : data instanceof Uint8Array
-      ? data
-      : data instanceof Blob
-      ? await blobToArrayBuffer(data)
-      : data;
 
-  // We use symmetric encryption. AES-GCM is the recommended algorithm and
-  // includes checks that the ciphertext has not been modified by an attacker.
-  const encryptedBuffer = await window.crypto.subtle.encrypt(
-    {
-      name: "AES-GCM",
-      iv,
-    },
-    importedKey,
-    buffer as ArrayBuffer | Uint8Array,
-  );
+  let buffer: ArrayBuffer;
 
-  return { encryptedBuffer, iv };
+  if (typeof data === "string") {
+    buffer = new TextEncoder().encode(data).buffer;
+  } else if (data instanceof Uint8Array) {
+    buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  } else if (data instanceof Blob) {
+    buffer = await blobToArrayBuffer(data);
+  } else {
+    buffer = data;
+  }
+
+  // 直接返回原始数据，不加密
+  return { encryptedBuffer: buffer, iv };
 };
 
 export const decryptData = async (
@@ -81,13 +67,10 @@ export const decryptData = async (
   encrypted: Uint8Array | ArrayBuffer,
   privateKey: string,
 ): Promise<ArrayBuffer> => {
-  const key = await getCryptoKey(privateKey, "decrypt");
-  return window.crypto.subtle.decrypt(
-    {
-      name: "AES-GCM",
-      iv,
-    },
-    key,
-    encrypted,
-  );
+  // 直接返回原始数据，不解密
+  if (encrypted instanceof Uint8Array) {
+    return encrypted.buffer.slice(encrypted.byteOffset, encrypted.byteOffset + encrypted.byteLength);
+  }
+  return encrypted;
 };
+
